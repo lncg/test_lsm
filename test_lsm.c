@@ -17,9 +17,9 @@
 
 #include <linux/cred.h>
 
-#define LINUX_VERSION_CODE 132640
+//#define LINUX_VERSION_CODE 132640
 
-#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
+//#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
 
 /* Function pointers originally registered by register_security(). */
 static struct security_operations original_security_ops /* = *security_ops; */;
@@ -268,6 +268,7 @@ struct security_operations * __init probe_security_ops(void)
 
 void get_full_path(struct dentry *dentry)
 {
+	pos_buf_path = LEN_BUF_PATH;
 	while (dentry->d_parent != dentry)
 	{
 		int len = strlen(dentry->d_name.name);
@@ -298,6 +299,26 @@ static int ccs_inode_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	return original_security_ops.inode_mkdir(dir, dentry, mode);
 }
 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
+
+/**
+ * ccs_file_open - Check permission for open().
+ *
+ * @f:    Pointer to "struct file".
+ * @cred: Pointer to "struct cred".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_file_open(struct file *f, const struct cred *cred)
+{
+	get_full_path(f->f_path.dentry);
+	printk("pid: [%d], open: [%s]\n", current->pid, buf_path + pos_buf_path);
+
+	while (!original_security_ops.file_open);
+	return original_security_ops.file_open(f, cred);
+}
+#else
 /**
  * ccs_dentry_open - Check permission for open().
  *
@@ -308,12 +329,12 @@ static int ccs_inode_mkdir(struct inode *dir, struct dentry *dentry, int mode)
  */
 static int ccs_dentry_open(struct file *f, const struct cred *cred)
 {
-	pos_buf_path = LEN_BUF_PATH;
 	get_full_path(f->f_path.dentry);
 	printk("pid: [%d], open: [%s]\n", current->pid, buf_path + pos_buf_path);
 	while (!original_security_ops.dentry_open);
 	return original_security_ops.dentry_open(f, cred);
 }
+#endif
 
 
 #define NIPQUAD(addr) \
@@ -355,7 +376,11 @@ static int ccs_socket_connect(struct socket *sock, struct sockaddr *addr,
 static void __init ccs_update_security_ops(struct security_operations *ops)
 {
 	swap_security_ops(inode_mkdir);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
+	swap_security_ops(file_open);
+#else
 	swap_security_ops(dentry_open);
+#endif
 	swap_security_ops(socket_connect);
 }
 
@@ -377,7 +402,11 @@ out:
 static void __exit ccs_exit(void)
 {
 	ops->inode_mkdir = original_security_ops.inode_mkdir;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
+	ops->file_open = original_security_ops.file_open;
+#else
 	ops->dentry_open = original_security_ops.dentry_open;
+#endif
 	ops->socket_connect = original_security_ops.socket_connect;
 	return;
 }
